@@ -63,7 +63,10 @@ log() {
 # ipmitool wrapper: local BMC, or remote iDRAC when IPMI_HOST is set.
 ipmi() {
   if [[ -n "$IPMI_HOST" ]]; then
-    ipmitool -I lanplus -H "$IPMI_HOST" -U "$IPMI_USER" -P "$IPMI_PASS" "$@"
+    # Hand the password to ipmitool via the IPMI_PASSWORD env var (-E) rather
+    # than -P, so the BMC credential never appears in `ps`/argv while the
+    # control loop is running.
+    IPMI_PASSWORD="$IPMI_PASS" ipmitool -I lanplus -H "$IPMI_HOST" -U "$IPMI_USER" -E "$@"
   else
     ipmitool "$@"
   fi
