@@ -99,8 +99,9 @@ Find your temperature sensor:
 fan-control.sh list-sensors
 ```
 
-Pick one (commonly `Temp`; dual-socket boxes expose two) and set `SENSOR_NAME`
-in the config file.
+Pick one (commonly `Temp`) and set `SENSOR_NAME` in the config file. Dual-socket
+boxes expose two sensors under that same name; the hottest reading is the one
+the curve is applied to.
 
 ### Run as a service (systemd)
 

@@ -14,7 +14,8 @@ HYSTERESIS=2
 
 # IPMI sensor to read. Find yours with:  fan-control.sh list-sensors
 # Common values: "Temp" (single-CPU package temp), "Inlet Temp", "Exhaust Temp".
-# Dual-socket boxes often expose two "Temp" sensors; pick the one you want.
+# Dual-socket boxes expose two "Temp" sensors under that one name; when a name
+# returns more than one reading, the hottest is used.
 SENSOR_NAME="Temp"
 
 # Where to log and store the PID.

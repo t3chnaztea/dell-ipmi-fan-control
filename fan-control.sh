@@ -88,13 +88,31 @@ set_fan_speed() {
 }
 
 get_temp() {
-  local raw
-  raw=$(ipmi sensor reading "$SENSOR_NAME" 2>/dev/null | awk -F'|' '{print $2}' | tr -d ' ')
-  # Reject empty / "na" / non-numeric readings; truncate any decimal portion.
-  if [[ ! "$raw" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+  local raw line value max=-1
+
+  # One sensor NAME can return several readings: dual-socket boxes expose two
+  # sensors both called "Temp". Read every line and use the hottest, because
+  # that is the one the fans have to answer to. Treating the multi-line reply
+  # as a single number reads as non-numeric and fails the whole sensor read.
+  raw=$(ipmi sensor reading "$SENSOR_NAME" 2>/dev/null) || return 1
+
+  while IFS= read -r line; do
+    value="${line#*|}"                  # drop the sensor-name column
+    value="${value%%|*}"                # keep only the reading column
+    value="${value//[[:space:]]/}"
+    # Skip empty / "na" / non-numeric readings; truncate any decimal portion.
+    if [[ "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+      value="${value%.*}"
+      if (( value > max )); then
+        max=$value
+      fi
+    fi
+  done <<< "$raw"
+
+  if (( max < 0 )); then
     return 1
   fi
-  echo "${raw%.*}"
+  echo "$max"
 }
 
 temp_to_percent() {
