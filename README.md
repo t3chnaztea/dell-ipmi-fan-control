@@ -27,7 +27,7 @@ Test it under load before you trust it, and keep the top tier aggressive.
 
 ## Compatibility
 
-- **Works:** PowerEdge 11G–13G — R310, R320, R410, R420, R610, R620, R710,
+- **Works:** PowerEdge 11G–13G: R310, R320, R410, R420, R610, R620, R710,
   R720, R630, R730, T-series equivalents, and similar. These accept the raw
   IPMI fan commands used here.
 - **Does not work:** Most 14G and newer (R640, R740, …). Recent iDRAC firmware
@@ -131,6 +131,14 @@ sudo systemctl stop dell-ipmi-fan-control
 # ...or, if started by hand:
 kill "$(cat /var/run/fan-control.pid)"
 ```
+
+## More tiny tools for home labs
+
+Agent skills: [unifi](https://github.com/t3chnaztea/unifi-skills) · [home-assistant](https://github.com/t3chnaztea/home-assistant-skills) · [batocera](https://github.com/t3chnaztea/batocera-skills) · [psn](https://github.com/t3chnaztea/awesome-psn-skills)  
+Retro cabinet: [batocera-toolbox](https://github.com/t3chnaztea/batocera-toolbox) · [batocera-holidays](https://github.com/t3chnaztea/batocera-holidays)  
+Home server: [plex-preroll-roulette](https://github.com/t3chnaztea/plex-preroll-roulette)  
+PlayStation: [awesome-psnstats](https://github.com/t3chnaztea/awesome-psnstats)  
+Desktop: [fastfetch-macos-gradient-hud](https://github.com/t3chnaztea/fastfetch-macos-gradient-hud)
 
 ## License
 
