@@ -134,10 +134,15 @@ temp_to_percent() {
 }
 
 cleanup() {
+  # Capture the status we were called with BEFORE doing anything else, and
+  # exit with it. Exiting 0 unconditionally here would mask every crash as a
+  # clean shutdown, which silently disables systemd's Restart=on-failure.
+  local rc=$?
+  trap - EXIT
   log "Shutting down, restoring auto fan control"
   set_fan_auto
   rm -f "$PIDFILE"
-  exit 0
+  exit "$rc"
 }
 
 usage() {
@@ -174,23 +179,63 @@ if [[ -f "$PIDFILE" ]]; then
   rm -f "$PIDFILE"
 fi
 
+# --- Preflight --------------------------------------------------------------
+# Everything below runs BEFORE the BMC is switched out of automatic mode, so a
+# missing tool, a bad curve, or a typo'd sensor name can never leave the fans
+# under our control while we are unable to drive them.
+command -v ipmitool >/dev/null 2>&1 || {
+  echo "ipmitool not found in PATH. Install it (package: ipmitool)." >&2
+  exit 1
+}
+
+for entry in "${CURVE[@]}"; do
+  if [[ ! "$entry" =~ ^[0-9]+:[0-9]+$ ]]; then
+    echo "Malformed CURVE entry '$entry'. Expected \"temp_up:percent\"." >&2
+    exit 1
+  fi
+  if (( ${entry##*:} > 100 )); then
+    echo "CURVE entry '$entry' exceeds 100%." >&2
+    exit 1
+  fi
+done
+
+if ! preflight_temp=$(get_temp); then
+  echo "Cannot read sensor '$SENSOR_NAME'." >&2
+  echo "Run '$0 list-sensors' and set SENSOR_NAME to one of the names listed." >&2
+  echo "Fan mode left untouched (still Dell automatic)." >&2
+  exit 1
+fi
+
 echo $$ > "$PIDFILE"
 trap cleanup SIGTERM SIGINT SIGHUP EXIT
 
-log "Starting fan control (PID $$, sensor '$SENSOR_NAME', ${IPMI_HOST:-local})"
+log "Starting fan control (PID $$, sensor '$SENSOR_NAME' reads ${preflight_temp}C, ${IPMI_HOST:-local})"
 
 set_fan_manual
 log "Manual fan control enabled"
 
+failsafe_active=0
+
 while true; do
   temp=$(get_temp) || {
-    log "FAILSAFE: cannot read sensor '$SENSOR_NAME', restoring auto mode"
-    set_fan_auto
-    CURRENT_PERCENT=""
+    # Hand the fans back to the BMC and STAY in auto until a read succeeds.
+    # Re-arming manual mode on every failed pass (the previous behaviour) makes
+    # a dead sensor flap the BMC between auto and manual forever.
+    if (( failsafe_active == 0 )); then
+      log "FAILSAFE: cannot read sensor '$SENSOR_NAME', restoring auto mode"
+      set_fan_auto
+      failsafe_active=1
+      CURRENT_PERCENT=""
+    fi
     sleep "$INTERVAL"
-    set_fan_manual 2>/dev/null || true
     continue
   }
+
+  if (( failsafe_active == 1 )); then
+    log "Sensor '$SENSOR_NAME' readable again (${temp}C), resuming manual control"
+    set_fan_manual
+    failsafe_active=0
+  fi
 
   target=$(temp_to_percent "$temp")
 
