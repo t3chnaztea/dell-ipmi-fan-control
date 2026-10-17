@@ -71,7 +71,9 @@ The parts that are easy to get wrong, and are handled:
 - **Failsafe.** Dell's automatic control is restored on exit, on
   `SIGTERM`/`SIGINT`, and if a sensor read fails. A dead sensor hands the fans
   back to the BMC and leaves them there until it reads again, rather than
-  flapping between modes once per interval.
+  flapping between modes once per interval. A failed or timed-out IPMI write
+  is logged with a consecutive-failure count, the fans go back to auto, and
+  the next pass retries; one dropped packet does not kill the daemon.
 - **Preflight.** A missing `ipmitool`, an unreadable sensor name, or a
   malformed curve fails *before* the BMC is taken out of automatic mode, so a
   typo cannot leave your fans owned by a script that already died.

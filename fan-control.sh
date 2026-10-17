@@ -72,8 +72,12 @@ ipmi() {
   fi
 }
 
+# These return ipmitool's status. Callers test it: a single failed or
+# timed-out IPMI call must not kill the daemon under set -e. Note that set -e
+# is suspended inside a function called from an if/||, so set_fan_auto must
+# return explicitly or it would log success after a failed call.
 set_fan_auto() {
-  ipmi raw 0x30 0x30 0x01 0x01 > /dev/null 2>&1
+  ipmi raw 0x30 0x30 0x01 0x01 > /dev/null 2>&1 || return 1
   log "Restored Dell automatic fan control"
 }
 
@@ -155,10 +159,25 @@ cleanup() {
   # Capture the status we were called with BEFORE doing anything else, and
   # exit with it. Exiting 0 unconditionally here would mask every crash as a
   # clean shutdown, which silently disables systemd's Restart=on-failure.
-  local rc=$?
+  local rc=$? attempt
   trap - EXIT
+  # Everything below is best-effort. Under set -e a failed set_fan_auto (likely
+  # when the BMC is the reason we are exiting) would abort the trap before the
+  # pidfile is removed and leave no record of the outcome.
+  set +e
   log "Shutting down, restoring auto fan control"
-  set_fan_auto
+  for attempt in 1 2 3; do
+    if set_fan_auto; then
+      break
+    fi
+    log "WARN: restore auto attempt $attempt/3 failed"
+    if (( attempt == 3 )); then
+      log "ERROR: could not restore Dell auto fan mode; fans may be stuck at ${CURRENT_PERCENT:-an unknown}%"
+      echo "ERROR: could not restore Dell auto fan mode. Check the BMC." >&2
+    else
+      sleep 2
+    fi
+  done
   rm -f "$PIDFILE"
   exit "$rc"
 }
@@ -229,10 +248,29 @@ trap cleanup SIGTERM SIGINT SIGHUP EXIT
 
 log "Starting fan control (PID $$, sensor '$SENSOR_NAME' reads ${preflight_temp}C, ${IPMI_HOST:-local})"
 
-set_fan_manual
-log "Manual fan control enabled"
+# A failed IPMI write is never fatal. The loop logs it, hands the fans back to
+# Dell auto mode (the safe state), and re-arms manual mode on the next pass.
+# manual_armed=0 means "not under our control right now".
+manual_armed=0
+if set_fan_manual; then
+  manual_armed=1
+  log "Manual fan control enabled"
+else
+  log "ERROR: could not enable manual fan control, retrying next pass"
+fi
 
 failsafe_active=0
+ipmi_failures=0
+
+# Record a failed IPMI write and fall back to auto. The counter is in every log
+# line, so a persistent failure stays visible instead of looking transient.
+ipmi_write_failed() {
+  ipmi_failures=$(( ipmi_failures + 1 ))
+  log "ERROR: $1 failed (${ipmi_failures} consecutive), restoring auto mode"
+  set_fan_auto || log "ERROR: restoring auto mode also failed"
+  manual_armed=0
+  CURRENT_PERCENT=""
+}
 
 while true; do
   temp=$(get_temp) || {
@@ -241,7 +279,7 @@ while true; do
     # a dead sensor flap the BMC between auto and manual forever.
     if (( failsafe_active == 0 )); then
       log "FAILSAFE: cannot read sensor '$SENSOR_NAME', restoring auto mode"
-      set_fan_auto
+      set_fan_auto || log "ERROR: restoring auto mode failed"
       failsafe_active=1
       CURRENT_PERCENT=""
     fi
@@ -251,16 +289,34 @@ while true; do
 
   if (( failsafe_active == 1 )); then
     log "Sensor '$SENSOR_NAME' readable again (${temp}C), resuming manual control"
-    set_fan_manual
     failsafe_active=0
+    manual_armed=0
+  fi
+
+  if (( manual_armed == 0 )); then
+    if ! set_fan_manual; then
+      ipmi_write_failed "enabling manual mode"
+      sleep "$INTERVAL"
+      continue
+    fi
+    manual_armed=1
   fi
 
   target=$(temp_to_percent "$temp")
 
   if [[ "$target" != "$CURRENT_PERCENT" ]]; then
-    set_fan_speed "$target"
+    if ! set_fan_speed "$target"; then
+      ipmi_write_failed "setting fan ${target}% at ${temp}C"
+      sleep "$INTERVAL"
+      continue
+    fi
     log "${temp}C -> fan ${target}% (was ${CURRENT_PERCENT:-auto})"
     CURRENT_PERCENT=$target
+  fi
+
+  if (( ipmi_failures > 0 )); then
+    log "IPMI writes recovered after ${ipmi_failures} consecutive failure(s)"
+    ipmi_failures=0
   fi
 
   sleep "$INTERVAL"
